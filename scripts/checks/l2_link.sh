@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Layer 2 Link Diagnostics
 # Determines whether frame-level communication is permitted
+# Interface selection is derived from kernel routing intent
 
 set -euo pipefail
+
+TARGET="${1:-8.8.8.8}"
 
 # -------- helpers --------
 
@@ -21,25 +24,30 @@ require_root() {
     fi
 }
 
+# -------- interface selection --------
+
+detect_interface() {
+    iface=$(ip route get "$TARGET" 2>/dev/null \
+        | awk '/dev/ {for (i=1;i<=NF;i++) if ($i=="dev") print $(i+1)}' \
+        | head -n1)
+
+    [[ -z "$iface" ]] && fail "no routed interface found for $TARGET" 11
+    [[ "$iface" == "lo" ]] && fail "routing resolved to loopback (lo), external L2 not applicable" 11
+
+    log "routed interface: $iface"
+}
+
 # -------- checks --------
 
 check_rfkill() {
     if command -v rfkill >/dev/null 2>&1; then
-        if rfkill list | grep -q "Soft blocked: yes\|Hard blocked: yes"; then
+        if rfkill list | grep -qE "Soft blocked: yes|Hard blocked: yes"; then
             fail "rfkill blocking detected" 10
         fi
         log "rfkill: OK"
     else
-        log "rfkill: tool not present (skipped)"
+        log "rfkill: not installed (skipped)"
     fi
-}
-
-detect_interface() {
-    iface=$(ip -o link show up | awk -F': ' '{print $2}' | head -n1 || true)
-
-    [[ -z "$iface" ]] && fail "no active network interface found" 11
-
-    log "interface detected: $iface"
 }
 
 check_link_state() {
@@ -54,21 +62,25 @@ check_link_state() {
 check_wifi_association() {
     if iw dev "$iface" info >/dev/null 2>&1; then
         if ! iw dev "$iface" link | grep -q "Connected to"; then
-            fail "wireless interface not associated" 13
+            fail "wireless interface $iface not associated" 13
         fi
         log "wifi association: OK"
     else
-        log "interface is not wireless (skipped)"
+        log "interface $iface is not wireless (skipped)"
     fi
 }
 
 check_neighbor_reachability() {
-    gw=$(ip route show default 0.0.0.0/0 | awk '{print $3}' | head -n1 || true)
+    gw=$(ip route get "$TARGET" | awk '/via/ {print $3}' | head -n1 || true)
 
-    [[ -z "$gw" ]] && fail "no default gateway found" 14
+    [[ -z "$gw" ]] && {
+        log "no gateway (direct L2 reachability assumed)"
+        return 0
+    }
 
-    ip neigh show "$gw" dev "$iface" | grep -q "REACHABLE\|STALE\|DELAY" \
-        || fail "gateway neighbor unreachable at L2" 14
+    ip neigh show "$gw" dev "$iface" \
+        | grep -qE "REACHABLE|STALE|DELAY" \
+        || fail "neighbor $gw unreachable at L2" 14
 
     log "neighbor reachability: OK ($gw)"
 }
@@ -76,11 +88,11 @@ check_neighbor_reachability() {
 # -------- main --------
 
 require_root
-check_rfkill
 detect_interface
+check_rfkill
 check_link_state
 check_wifi_association
 check_neighbor_reachability
 
-log "L2 communication permitted"
+log "L2 communication permitted on $iface"
 exit 0
