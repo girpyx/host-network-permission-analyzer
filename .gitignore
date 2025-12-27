@@ -1,2 +1,54 @@
+# Log files
 *.log
+logs/
+*.log.*
+
+# Temporary files
 *.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# Test output
+test_results/
+test_output/
+
+# Local configuration (if we add config files later)
+config.local
+.env.local
+
+# Compiled/generated files (if we add any)
+*.o
+*.so
+*.a
+
+# Documentation build artifacts (if we add generated docs)
+docs/_build/
+docs/.doctrees/
+
+# Coverage reports (if we add test coverage)
+coverage/
+*.coverage
+
+# Virtual environments (if we add Python tools)
+venv/
+.venv/
+env/
+
+# Package manager files
+node_modules/
