@@ -1,21 +1,35 @@
 #!/usr/bin/env bash
 # Layer 2 Link Diagnostics
 # Determines whether frame-level communication is permitted
-# Interface selection is derived from kernel routing intent
+#
+# Usage: sudo ./l2_link.sh [TARGET_IP]
+#
+# Exit Codes:
+#   0  - L2 communication permitted
+#   1  - Permission denied (not root)
+#   10 - RF kill blocking detected
+#   11 - No route or interface DOWN
+#   12 - No carrier (cable unplugged/adapter disabled)
+#   13 - WiFi not associated to access point
+#   14 - Gateway unreachable at L2
 
 set -euo pipefail
 
-TARGET="${1:-8.8.8.8}"
+# -------- Configuration --------
 
-# -------- helpers --------
+readonly LOG_PREFIX="[L2]"
+
+# -------- Helpers --------
 
 log() {
-    printf '[L2] %s\n' "$1"
+    printf '%s %s\n' "$LOG_PREFIX" "$1" >&2  # Add >&2 to redirect to stderr
 }
 
 fail() {
-    log "FAIL: $1"
-    exit "$2"
+    local message="$1"
+    local exit_code="$2"
+    log "FAIL: $message"
+    exit "$exit_code"
 }
 
 require_root() {
@@ -24,75 +38,122 @@ require_root() {
     fi
 }
 
-# -------- interface selection --------
+# -------- Interface Selection --------
 
 detect_interface() {
-    iface=$(ip route get "$TARGET" 2>/dev/null \
+    local target="$1"
+    local iface
+    
+    iface=$(ip route get "$target" 2>/dev/null \
         | awk '/dev/ {for (i=1;i<=NF;i++) if ($i=="dev") print $(i+1)}' \
         | head -n1)
 
-    [[ -z "$iface" ]] && fail "no routed interface found for $TARGET" 11
-    [[ "$iface" == "lo" ]] && fail "routing resolved to loopback (lo), external L2 not applicable" 11
+    if [[ -z "$iface" ]]; then
+        fail "no routed interface found for $target" 11
+    fi
+    
+    if [[ "$iface" == "lo" ]]; then
+        fail "routing resolved to loopback (lo), external L2 not applicable" 11
+    fi
 
     log "routed interface: $iface"
+    echo "$iface"  # Return via stdout
 }
 
-# -------- checks --------
+# -------- Checks --------
 
 check_rfkill() {
-    if command -v rfkill >/dev/null 2>&1; then
-        if rfkill list | grep -qE "Soft blocked: yes|Hard blocked: yes"; then
-            fail "rfkill blocking detected" 10
-        fi
-        log "rfkill: OK"
-    else
+    if ! command -v rfkill >/dev/null 2>&1; then
         log "rfkill: not installed (skipped)"
+        return 0
     fi
+    
+    if rfkill list | grep -qE "Soft blocked: yes|Hard blocked: yes"; then
+        fail "rfkill blocking detected (use 'rfkill unblock all')" 10
+    fi
+    
+    log "rfkill: OK"
 }
 
 check_link_state() {
-    state=$(ip link show "$iface")
+    local iface="$1"
+    local state
+    
+    state=$(ip link show "$iface" 2>/dev/null)
 
-    echo "$state" | grep -q "UP" || fail "interface $iface is DOWN" 11
-    echo "$state" | grep -q "LOWER_UP" || fail "no carrier on $iface" 12
+    if ! echo "$state" | grep -q "UP"; then
+        fail "interface $iface is DOWN (use 'ip link set $iface up')" 11
+    fi
+    
+    if ! echo "$state" | grep -q "LOWER_UP"; then
+        fail "no carrier on $iface (cable unplugged or adapter disabled?)" 12
+    fi
 
     log "interface state: UP with carrier"
 }
 
 check_wifi_association() {
-    if iw dev "$iface" info >/dev/null 2>&1; then
-        if ! iw dev "$iface" link | grep -q "Connected to"; then
-            fail "wireless interface $iface not associated" 13
-        fi
-        log "wifi association: OK"
-    else
-        log "interface $iface is not wireless (skipped)"
+    local iface="$1"
+    
+    if ! command -v iw >/dev/null 2>&1; then
+        log "iw: not installed, skipping WiFi checks"
+        return 0
     fi
+    
+    # Check if interface is wireless
+    if ! iw dev "$iface" info >/dev/null 2>&1; then
+        log "interface $iface is not wireless (skipped)"
+        return 0
+    fi
+    
+    if ! iw dev "$iface" link | grep -q "Connected to"; then
+        fail "wireless interface $iface not associated to access point" 13
+    fi
+    
+    log "wifi association: OK"
 }
 
 check_neighbor_reachability() {
-    gw=$(ip route get "$TARGET" | awk '/via/ {print $3}' | head -n1 || true)
+    local iface="$1"
+    local target="$2"
+    local gw
+    local neighbor_state
+    
+    gw=$(ip route get "$target" 2>/dev/null | awk '/via/ {print $3}' | head -n1 || true)
 
-    [[ -z "$gw" ]] && {
+    if [[ -z "$gw" ]]; then
         log "no gateway (direct L2 reachability assumed)"
         return 0
-    }
+    fi
 
-    ip neigh show "$gw" dev "$iface" \
-        | grep -qE "REACHABLE|STALE|DELAY" \
-        || fail "neighbor $gw unreachable at L2" 14
+    neighbor_state=$(ip neigh show "$gw" dev "$iface" 2>/dev/null || echo "NONE")
+    
+    if ! echo "$neighbor_state" | grep -qE "REACHABLE|STALE|DELAY"; then
+        fail "neighbor $gw unreachable at L2 (state: ${neighbor_state})" 14
+    fi
 
     log "neighbor reachability: OK ($gw)"
 }
 
-# -------- main --------
+# -------- Main --------
 
-require_root
-detect_interface
-check_rfkill
-check_link_state
-check_wifi_association
-check_neighbor_reachability
+main() {
+    local target="${1:-8.8.8.8}"
+    local iface
+    
+    require_root
+    
+    iface=$(detect_interface "$target")
+    readonly iface
+    
+    check_rfkill
+    check_link_state "$iface"
+    check_wifi_association "$iface"
+    check_neighbor_reachability "$iface" "$target"
 
-log "L2 communication permitted on $iface"
-exit 0
+    log "L2 communication permitted on $iface"
+    exit 0
+}
+
+# Run main with all script arguments
+main "$@"
