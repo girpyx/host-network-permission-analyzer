@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Layer 2 Link Diagnostics
+# Layer 2 Link Diagnostics - Complete Fixed Version
 # Determines whether frame-level communication is permitted
 #
 # Usage: sudo ./l2_link.sh [TARGET_IP]
@@ -13,7 +13,7 @@
 #   13 - WiFi not associated to access point
 #   14 - Gateway unreachable at L2
 
-set -euo pipefail
+set -uo pipefail
 
 # -------- Configuration --------
 
@@ -22,7 +22,7 @@ readonly LOG_PREFIX="[L2]"
 # -------- Helpers --------
 
 log() {
-    printf '%s %s\n' "$LOG_PREFIX" "$1" >&2  # Add >&2 to redirect to stderr
+    printf '%s %s\n' "$LOG_PREFIX" "$1"
 }
 
 fail() {
@@ -36,6 +36,13 @@ require_root() {
     if [[ $EUID -ne 0 ]]; then
         fail "must be run as root (CAP_NET_ADMIN required)" 1
     fi
+}
+
+# -------- Helper Functions --------
+
+is_wireless_interface() {
+    local iface="$1"
+    [[ -d "/sys/class/net/$iface/wireless" ]]
 }
 
 # -------- Interface Selection --------
@@ -56,13 +63,20 @@ detect_interface() {
         fail "routing resolved to loopback (lo), external L2 not applicable" 11
     fi
 
-    log "routed interface: $iface"
-    echo "$iface"  # Return via stdout
+    echo "$iface"
 }
 
 # -------- Checks --------
 
 check_rfkill() {
+    local iface="$1"
+    
+    # Skip rfkill check for non-wireless interfaces
+    if ! is_wireless_interface "$iface"; then
+        log "rfkill: not applicable (interface is not wireless)"
+        return 0
+    fi
+    
     if ! command -v rfkill >/dev/null 2>&1; then
         log "rfkill: not installed (skipped)"
         return 0
@@ -101,7 +115,7 @@ check_wifi_association() {
     fi
     
     # Check if interface is wireless
-    if ! iw dev "$iface" info >/dev/null 2>&1; then
+    if ! is_wireless_interface "$iface"; then
         log "interface $iface is not wireless (skipped)"
         return 0
     fi
@@ -145,8 +159,9 @@ main() {
     
     iface=$(detect_interface "$target")
     readonly iface
+    log "routed interface: $iface"
     
-    check_rfkill
+    check_rfkill "$iface"
     check_link_state "$iface"
     check_wifi_association "$iface"
     check_neighbor_reachability "$iface" "$target"

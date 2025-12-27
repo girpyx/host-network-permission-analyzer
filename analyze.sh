@@ -421,60 +421,112 @@ main() {
         log_header "Layer 2: Link Layer"
     fi
     l2_result=$(run_layer_check "l2_link.sh" "$destination")
-    IFS='|' read -r l2_exit l2_output <<< "$l2_result"
+    l2_exit="${l2_result%%|*}"
+    l2_output="${l2_result#*|}"
     results+=("L2:$l2_exit")
     total_checks=$((total_checks + 1))
     [[ $l2_exit -eq 0 ]] && passed_checks=$((passed_checks + 1))
     
-    if [[ "$VERBOSE" == true || $l2_exit -ne 0 ]]; then
+    if [[ "$QUIET" == false ]]; then
         echo "$l2_output"
     fi
-    [[ $l2_exit -ne 0 ]] && analyze_result "L2" "$l2_exit" "$l2_output"
+    
+    if [[ $l2_exit -ne 0 ]]; then
+        if [[ "$QUIET" == false ]]; then
+            log_error "L2 check failed (exit code: $l2_exit)"
+            analyze_result "L2" "$l2_exit" "$l2_output"
+        fi    
+    else
+        if [[ "$QUIET" == false ]]; then
+            log_success "L2 check passed"
+        fi
+    fi
+    echo ""
     
     # Layer 3
     if [[ "$QUIET" == false ]]; then
         log_header "Layer 3: Network Layer"
     fi
     l3_result=$(run_layer_check "l3_network.sh" "$destination")
-    IFS='|' read -r l3_exit l3_output <<< "$l3_result"
+    l3_exit="${l3_result%%|*}"
+    l3_output="${l3_result#*|}"
     results+=("L3:$l3_exit")
     total_checks=$((total_checks + 1))
     [[ $l3_exit -eq 0 ]] && passed_checks=$((passed_checks + 1))
     
-    if [[ "$VERBOSE" == true || $l3_exit -ne 0 ]]; then
+    if [[ "$QUIET" == false ]]; then
         echo "$l3_output"
     fi
-    [[ $l3_exit -ne 0 ]] && analyze_result "L3" "$l3_exit" "$l3_output"
+    
+    if [[ $l3_exit -ne 0 ]]; then
+        if [[ "$QUIET" == false ]]; then
+            log_error "L3 check failed (exit code: $l3_exit)"
+        fi
+        analyze_result "L3" "$l3_exit" "$l3_output"
+    else
+        if [[ "$QUIET" == false ]]; then
+            log_success "L3 check passed"
+        fi
+    fi
+    echo ""
     
     # Layer 4
     if [[ "$QUIET" == false ]]; then
         log_header "Layer 4: Transport Layer"
     fi
     l4_result=$(run_layer_check "l4_transport.sh" "$destination" "$port" "tcp")
-    IFS='|' read -r l4_exit l4_output <<< "$l4_result"
+    l4_exit="${l4_result%%|*}"
+    l4_output="${l4_result#*|}"
     results+=("L4:$l4_exit")
     total_checks=$((total_checks + 1))
     [[ $l4_exit -eq 0 ]] && passed_checks=$((passed_checks + 1))
     
-    if [[ "$VERBOSE" == true || $l4_exit -ne 0 ]]; then
+    if [[ "$QUIET" == false ]]; then
         echo "$l4_output"
     fi
-    [[ $l4_exit -ne 0 ]] && analyze_result "L4" "$l4_exit" "$l4_output"
+    
+    if [[ $l4_exit -ne 0 ]]; then
+        if [[ "$QUIET" == false ]]; then
+            log_error "L4 check failed (exit code: $l4_exit)"
+        fi
+        analyze_result "L4" "$l4_exit" "$l4_output"
+    else
+        if [[ "$QUIET" == false ]]; then
+            log_success "L4 check passed"
+        fi
+    fi
+    echo ""
     
     # Firewall
     if [[ "$QUIET" == false ]]; then
         log_header "Firewall Layer"
     fi
     fw_result=$(run_layer_check "firewall.sh" "$destination" "$port")
-    IFS='|' read -r fw_exit fw_output <<< "$fw_result"
+    fw_exit="${fw_result%%|*}"
+    fw_output="${fw_result#*|}"
     results+=("FW:$fw_exit")
     total_checks=$((total_checks + 1))
     [[ $fw_exit -eq 0 || $fw_exit -eq 42 ]] && passed_checks=$((passed_checks + 1))
     
-    if [[ "$VERBOSE" == true || $fw_exit -ne 0 ]]; then
+    if [[ "$QUIET" == false ]]; then
         echo "$fw_output"
     fi
-    [[ $fw_exit -ne 0 && $fw_exit -ne 42 ]] && analyze_result "FW" "$fw_exit" "$fw_output"
+    
+    if [[ $fw_exit -ne 0 && $fw_exit -ne 42 ]]; then
+        if [[ "$QUIET" == false ]]; then
+            log_error "Firewall check failed (exit code: $fw_exit)"
+        fi
+        analyze_result "FW" "$fw_exit" "$fw_output"
+    else
+        if [[ "$QUIET" == false ]]; then
+            if [[ $fw_exit -eq 42 ]]; then
+                log_warn "No firewall detected"
+            else
+                log_success "Firewall check passed"
+            fi
+        fi
+    fi
+    echo ""
     
     # Output results
     if [[ "$JSON_OUTPUT" == true ]]; then

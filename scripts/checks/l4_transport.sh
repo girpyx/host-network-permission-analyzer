@@ -22,7 +22,7 @@ readonly DEFAULT_PROTOCOL="tcp"
 # -------- Helpers --------
 
 log() {
-    printf '%s %s\n' "$LOG_PREFIX" "$1" >&2  # Add >&2 to redirect to stderr
+    printf '%s %s\n' "$LOG_PREFIX" "$1"
 }
 
 fail() {
@@ -107,7 +107,12 @@ check_local_port_binding() {
     
     local listening
     if command -v ss >/dev/null 2>&1; then
-        listening=$(ss -ln "$protocol" | grep ":$port " || true)
+        # Use -t for TCP or -u for UDP
+        if [[ "$protocol" == "tcp" ]]; then
+            listening=$(ss -lnt "sport = :$port" 2>/dev/null || true)
+        else
+            listening=$(ss -lnu "sport = :$port" 2>/dev/null || true)
+        fi
     else
         listening=$(netstat -ln | grep "$protocol.*:$port " || true)
     fi
